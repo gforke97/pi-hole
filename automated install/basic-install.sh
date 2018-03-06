@@ -1803,7 +1803,13 @@ FTLinstall() {
     if ./"${binary}" --resolver > /dev/null; then
       if [[ $(which dnsmasq 2>/dev/null) ]]; then
         stop_service dnsmasq
-        disable_service dnsmasq
+        disable_service dnsmasq                
+        #ensure /etc/dnsmasq.conf contains `conf-dir=/etc/dnsmasq.d`
+        confdir="conf-dir=/etc/dnsmasq.d"
+        conffile="/etc/dnsmasq.conf"
+        if ! grep -q "$confdir" "$conffile"; then
+            echo "$confdir" >> "$conffile"
+        fi
       fi
     fi
     
