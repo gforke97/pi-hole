@@ -163,7 +163,7 @@ if command -v apt-get &> /dev/null; then
   # These programs are stored in an array so they can be looped through later
   INSTALLER_DEPS=(apt-utils dialog debconf dhcpcd5 git ${iproute_pkg} whiptail)
   # Pi-hole itself has several dependencies that also need to be installed
-  PIHOLE_DEPS=(bc cron curl dnsutils iputils-ping lsof netcat sudo unzip wget idn2 sqlite3)
+  PIHOLE_DEPS=(bc cron curl dnsutils iputils-ping lsof netcat sudo unzip wget idn2 sqlite3 libcap2-bin)
   # The Web dashboard has some that also need to be installed
   # It's useful to separate the two since our repos are also setup as "Core" code and "Web" code
   PIHOLE_WEB_DEPS=(lighttpd ${phpVer}-common ${phpVer}-cgi ${phpVer}-${phpSqlite})
@@ -202,7 +202,7 @@ elif command -v rpm &> /dev/null; then
     PKG_MANAGER="yum"
   fi
 
-  # Fedora and family update cache on every PKG_INSTALL call, no need for a separate update.
+  # Fedora and family update cache on every PKG_INSTALL call, no need for a separate update. 
   UPDATE_PKG_CACHE=":"
   PKG_INSTALL=(${PKG_MANAGER} install -y)
   PKG_COUNT="${PKG_MANAGER} check-update | egrep '(.i686|.x86|.noarch|.arm|.src)' | wc -l"
@@ -1158,6 +1158,24 @@ enable_service() {
   echo -e "${OVER}  ${TICK} ${str}"
 }
 
+# Disable service so that it will not with next reboot
+disable_service() {
+  # Local, named variables
+  local str="Disabling ${1} service"
+  echo ""
+  echo -ne "  ${INFO} ${str}..."
+  # If systemctl exists,
+  if command -v systemctl &> /dev/null; then
+    # use that to disable the service
+    systemctl disable "${1}" &> /dev/null
+  # Othwerwise,
+  else
+    # use update-rc.d to accomplish this
+    update-rc.d "${1}" disable &> /dev/null
+  fi
+  echo -e "${OVER}  ${TICK} ${str}"
+}
+
 update_package_cache() {
   # Running apt-get update/upgrade with minimal output can cause some issues with
   # requiring user input (e.g password for phpmyadmin see #218)
@@ -1757,11 +1775,35 @@ FTLinstall() {
   # Always replace pihole-FTL.service
   install -T -m 0755 "${PI_HOLE_LOCAL_REPO}/advanced/pihole-FTL.service" "/etc/init.d/pihole-FTL"
 
-  # If the download worked,
-  if curl -sSL --fail "https://github.com/pi-hole/FTL/releases/download/${latesttag%$'\r'}/${binary}" -o "${binary}"; then
-    # get sha1 of the binary we just downloaded for verification.
-    curl -sSL --fail "https://github.com/pi-hole/FTL/releases/download/${latesttag%$'\r'}/${binary}.sha1" -o "${binary}.sha1"
+  local ftlBranch
+  local url  
+  if [[ -f "/etc/pihole/ftlbranch" ]];then
+    ftlBranch=$(</etc/pihole/ftlbranch)
+  fi
+  
+  # Determine which version of FTL to download
+  if [[ "${ftlBranch}" == "master" ]];then
+    url="https://github.com/pi-hole/FTL/releases/download/${latesttag%$'\r'}"
+  else
+    url="https://ftl.pi-hole.net/${ftlBranch}"
+  fi
 
+  # If the download worked,
+  if curl -sSL --fail "${url}/${binary}" -o "${binary}"; then
+    # get sha1 of the binary we just downloaded for verification.
+    curl -sSL --fail "${url}/${binary}.sha1" -o "${binary}.sha1"
+    
+    # Make the tempory binary executable so that we can test the --resolver flag
+    chmod +x "${binary}"
+
+    # If the --resolver flag returns True (exit code 0), then we can safely stop & disable dnsmasq
+    if ./"${binary}" --resolver > /dev/null; then
+      if [[ $(which dnsmasq 2>/dev/null) ]]; then
+        stop_service dnsmasq
+        disable_service dnsmasq
+      fi
+    fi
+    
     # If we downloaded binary file (as opposed to text),
     if sha1sum --status --quiet -c "${binary}".sha1; then
       echo -n "transferred... "
@@ -2001,7 +2043,7 @@ main() {
     # Create directory for Pi-hole storage
     mkdir -p /etc/pihole/
 
-    stop_service dnsmasq
+    stop_service pihole-FTL
     if [[ "${INSTALL_WEB}" == true ]]; then
       stop_service lighttpd
     fi
@@ -2094,8 +2136,11 @@ main() {
 
   echo -e "  ${INFO} Restarting services..."
   # Start services
-  start_service dnsmasq
-  enable_service dnsmasq
+  # Only start and enable dnsmasq if FTL does not have the --resolver switch
+  if ! pihole-FTL --resolver > /dev/null; then 
+    start_service dnsmasq
+    enable_service dnsmasq
+  fi
 
   # If the Web server was installed,
   if [[ "${INSTALL_WEB}" == true ]]; then
