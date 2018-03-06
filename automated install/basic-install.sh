@@ -1778,10 +1778,11 @@ FTLinstall() {
   local ftlBranch
   local url
   local ftlBranch
-  # set default for ftlBranch
-  ftlBranch="master"
+    
   if [[ -f "/etc/pihole/ftlbranch" ]];then
     ftlBranch=$(</etc/pihole/ftlbranch)
+  else
+    ftlBranch="master"
   fi
   
   # Determine which version of FTL to download
