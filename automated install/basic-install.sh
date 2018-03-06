@@ -1776,7 +1776,10 @@ FTLinstall() {
   install -T -m 0755 "${PI_HOLE_LOCAL_REPO}/advanced/pihole-FTL.service" "/etc/init.d/pihole-FTL"
 
   local ftlBranch
-  local url  
+  local url
+  local ftlBranch
+  # set default for ftlBranch
+  ftlBranch="master"
   if [[ -f "/etc/pihole/ftlbranch" ]];then
     ftlBranch=$(</etc/pihole/ftlbranch)
   fi
